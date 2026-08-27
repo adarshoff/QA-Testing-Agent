@@ -7,6 +7,7 @@ from langgraph.graph import StateGraph, END
 from playwright_navigator import run_navigation
 from visual_qa import analyze_all_screenshots
 from figma_compare import compare_with_figma
+from design_intelligence import aggregate_tokens, find_inconsistencies, compute_consistency_score
 from memory import save_scan, get_previous_scan, init_db
 
 # Allow nested asyncio loops for synchronous LangGraph wrapping
@@ -36,6 +37,11 @@ class AgentState(TypedDict):
     new_bugs: List[Dict]
     quality_score: int
     figma_match_score: int
+    healing_events: List[Dict]
+    page_tokens: List[Dict]
+    design_tokens: Dict
+    design_inconsistencies: List[Dict]
+    design_consistency_score: int
     status: str
     error: Optional[str]
 
@@ -57,6 +63,11 @@ def observe_node(state: AgentState) -> AgentState:
     state["new_bugs"] = []
     state["quality_score"] = 0
     state["figma_match_score"] = 100
+    state["healing_events"] = []
+    state["page_tokens"] = []
+    state["design_tokens"] = {}
+    state["design_inconsistencies"] = []
+    state["design_consistency_score"] = 100
     state["error"] = None
     state["status"] = "observe"
     return state
@@ -74,6 +85,7 @@ def navigate_node(state: AgentState) -> AgentState:
         # Axe-core a11y + security findings are now returned by the navigator
         state["dom_a11y_bugs"]       = result.get("dom_a11y_bugs", [])
         state["security_bugs"]       = result.get("security_bugs", [])
+        state["page_tokens"]         = result.get("page_tokens", [])
     except Exception as e:
         state["error"] = f"Navigation error: {str(e)}"
         state["screenshots"] = []
@@ -117,12 +129,21 @@ def detect_node(state: AgentState) -> AgentState:
     # dom_a11y_bugs and security_bugs are now set by navigate_node directly from
     # the single Playwright session — no separate browser launches needed here.
 
-    # NEW: Run Functional QA (Playwright + Agent)
+    # Design Intelligence: cross-page design-token consistency, grounded in real
+    # computed styles (not vision guesswork) — complements the Figma diff above.
+    if state.get("page_tokens"):
+        aggregated = aggregate_tokens(state["page_tokens"])
+        state["design_tokens"] = aggregated
+        state["design_inconsistencies"] = find_inconsistencies(aggregated)
+        state["design_consistency_score"] = compute_consistency_score(state["design_inconsistencies"])
+
+    # Functional QA — self-healing Playwright interactions (Playwright + Agent)
     from functional_qa import run_functional_test
     try:
-        functional_res = run_functional_test(state["url"], "Fill out any forms or interact with main elements to find errors.")
+        functional_res = run_functional_test(state["url"])
         if functional_res.get("success"):
             state["functional_bugs"] = functional_res.get("bugs", [])
+            state["healing_events"] = functional_res.get("healing_events", [])
     except Exception as e:
         print(f"Functional QA error: {e}")
 
@@ -186,21 +207,25 @@ def report_node(state: AgentState) -> AgentState:
             "scan_id": state["scan_id"],
             "user_id": state["user_id"],
             "url": state["url"],
-            "quality_score": state["quality_score"],
-            "figma_match_score": state["figma_match_score"],
-            "all_bugs": state["all_bugs"],
-            "functional_bugs": state["functional_bugs"],
-            "dom_a11y_bugs": state["dom_a11y_bugs"],
-            "security_bugs": state["security_bugs"],
-            "network_issues": state["network_issues"],
-            "figma_deviations": state["figma_deviations"],
-            "fixes": state["fixes"],
-            "new_bugs": state["new_bugs"],
-            "pages_visited": state["pages_visited"],
-            "performance_metrics": state["performance_metrics"],
+            "quality_score": state.get("quality_score", 0),
+            "figma_match_score": state.get("figma_match_score", 100),
+            "all_bugs": state.get("all_bugs", []),
+            "functional_bugs": state.get("functional_bugs", []),
+            "dom_a11y_bugs": state.get("dom_a11y_bugs", []),
+            "security_bugs": state.get("security_bugs", []),
+            "network_issues": state.get("network_issues", []),
+            "figma_deviations": state.get("figma_deviations", []),
+            "fixes": state.get("fixes", []),
+            "new_bugs": state.get("new_bugs", []),
+            "pages_visited": state.get("pages_visited", []),
+            "performance_metrics": state.get("performance_metrics", {}),
             "screenshots_meta": [
-                {k: v for k, v in s.items() if k != "screenshot"} for s in state["screenshots"]
+                {k: v for k, v in s.items() if k != "screenshot"} for s in state.get("screenshots", [])
             ],
+            "healing_events": state.get("healing_events", []),
+            "design_tokens": state.get("design_tokens", {}),
+            "design_inconsistencies": state.get("design_inconsistencies", []),
+            "design_consistency_score": state.get("design_consistency_score", 100),
             "created_at": datetime.now().isoformat(),
         })
     except Exception as e:
@@ -247,6 +272,11 @@ def run_scan(user_id: str, url: str, figma_b64: Optional[str] = None) -> Dict[st
         "new_bugs": [],
         "quality_score": 0,
         "figma_match_score": 100,
+        "healing_events": [],
+        "page_tokens": [],
+        "design_tokens": {},
+        "design_inconsistencies": [],
+        "design_consistency_score": 100,
         "status": "idle",
         "error": None,
     }

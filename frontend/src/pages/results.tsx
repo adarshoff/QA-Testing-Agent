@@ -87,7 +87,7 @@ function CopyBtn({ text }: { text: string }) {
   );
 }
 
-type Tab = "bugs" | "functional" | "backend" | "a11y" | "security" | "figma";
+type Tab = "bugs" | "functional" | "backend" | "a11y" | "security" | "design";
 
 export default function ResultsPage() {
   const [, setLocation] = useLocation();
@@ -106,6 +106,8 @@ export default function ResultsPage() {
     fixes = [], newBugs = [], performanceMetrics = {},
     qualityScore, figmaMatchScore, pagesVisited = [], screenshotsMeta = [],
     domA11yBugs = [], securityBugs = [], functionalBugs = [],
+    designInconsistencies = [], designConsistencyScore,
+    healingEvents = [],
   } = currentScan;
 
   const frontendBugs          = allBugs.filter(b => !BACKEND_CATEGORIES.has(b.category));
@@ -132,7 +134,7 @@ export default function ResultsPage() {
     { id: "backend",    label: "Backend & API",    count: allBackendIssues.length,      icon: Server },
     { id: "a11y",       label: "Accessibility",    count: domA11yBugs.length,           icon: Accessibility },
     { id: "security",   label: "Security",         count: securityBugs.length,          icon: KeyRound },
-    { id: "figma",      label: "Figma Deviations", count: figmaDeviations.length,       icon: Figma },
+    { id: "design",     label: "Design Intelligence", count: figmaDeviations.length + designInconsistencies.length, icon: Figma },
   ];
 
   return (
@@ -224,6 +226,26 @@ export default function ResultsPage() {
               )}
             </div>
           </div>
+
+          {/* Design consistency */}
+          {typeof designConsistencyScore === "number" && (
+            <div className="rounded-xl border border-white/8 p-6" style={{ background: "#1e1f20" }}>
+              <p className="section-label mb-2">Design Consistency</p>
+              <p className={`text-5xl font-medium ${designConsistencyScore >= 80 ? "text-[#81c995]" : designConsistencyScore >= 60 ? "text-[#fdd663]" : "text-[#f28b82]"}`}>
+                {designConsistencyScore}
+              </p>
+              <div className="flex gap-1.5 mt-2 flex-wrap">
+                <span className="pill bg-white/8 text-white/40 border border-white/10">
+                  {designInconsistencies.length} token drift{designInconsistencies.length === 1 ? "" : "s"}
+                </span>
+                {healingEvents.length > 0 && (
+                  <span className="pill bg-[#8ab4f8]/10 text-[#8ab4f8] border border-[#8ab4f8]/25">
+                    {healingEvents.length} self-healed
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </motion.div>
 
         {/* ── Perf strip ── */}
@@ -396,6 +418,23 @@ export default function ResultsPage() {
                 Agentic Playwright interactions — testing form submissions, button clicks, and UI state changes dynamically.
               </span>
             </div>
+            {healingEvents.length > 0 && (
+              <div className="flex items-start gap-3 p-4 rounded-xl border border-[#8ab4f8]/20" style={{ background: "rgba(138,180,248,0.05)" }}>
+                <span className="text-lg leading-none">🩹</span>
+                <div className="space-y-1.5">
+                  <span className="text-sm font-medium" style={{ color: "#8ab4f8" }}>
+                    {healingEvents.length} element{healingEvents.length === 1 ? "" : "s"} self-healed this scan
+                  </span>
+                  {healingEvents.map((event: any, idx: number) => (
+                    <p key={idx} className="text-xs text-white/50 leading-relaxed">
+                      <span className="font-mono text-white/70">{event.label}</span> couldn't be found via{" "}
+                      <span className="font-mono">{event.originalStrategy}</span> — recovered via{" "}
+                      <span className="font-mono" style={{ color: "#8ab4f8" }}>{event.healedStrategy}</span> match.
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
             {functionalBugs.length === 0 ? (
               <div className="text-center py-20 text-muted-foreground">
                 <MousePointerClick className="w-12 h-12 mx-auto mb-3 opacity-20" />
@@ -420,12 +459,17 @@ export default function ResultsPage() {
                       <Badge variant="outline" className="text-xs border-[#4285F4]/25" style={{ color: "#4285F4", background: "rgba(66,133,244,0.06)" }}>
                         <MousePointerClick className="w-3 h-3 mr-1" /> Agent Action
                       </Badge>
+                      {bug.healed && (
+                        <Badge variant="outline" className="text-xs border-[#8ab4f8]/25" style={{ color: "#8ab4f8", background: "rgba(138,180,248,0.06)" }}>
+                          🩹 Self-healed
+                        </Badge>
+                      )}
                     </div>
-                    <p className="text-sm text-white/80 leading-relaxed font-semibold">{bug.action_attempted}</p>
+                    <p className="text-sm text-white/80 leading-relaxed font-semibold">{bug.actionAttempted}</p>
                     <p className="text-sm text-white/60 leading-relaxed">{bug.description}</p>
-                    {bug.element_selector && (
+                    {bug.elementSelector && (
                       <p className="text-xs text-white/40 font-mono px-3 py-2 rounded-lg border border-white/8" style={{ background: "rgba(255,255,255,0.03)" }}>
-                        Selector: {bug.element_selector}
+                        Selector: {bug.elementSelector}
                       </p>
                     )}
                     {bug.url && (
@@ -645,17 +689,62 @@ export default function ResultsPage() {
           </div>
         )}
 
-        {/* ── FIGMA ── */}
-        {tab === "figma" && (
-          <div className="space-y-3">
-            {figmaDeviations.length === 0 ? (
-              <div className="text-center py-20 text-muted-foreground">
-                <Figma className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                {currentScan.figmaMatchScore === 100
-                  ? "No Figma mockup was uploaded, or no deviations were found."
-                  : "No design deviations detected."}
+        {/* ── DESIGN INTELLIGENCE ── */}
+        {tab === "design" && (
+          <div className="space-y-6">
+            {/* Cross-page design-token drift — grounded in real computed styles */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 p-4 rounded-xl border border-[#8ab4f8]/20" style={{ background: "rgba(138,180,248,0.05)" }}>
+                <Layers className="w-5 h-5 shrink-0" style={{ color: "#8ab4f8" }} />
+                <span className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>
+                  Design-system consistency across every crawled page, computed from real CSS — not a screenshot guess.
+                </span>
               </div>
-            ) : (
+              {designInconsistencies.length === 0 ? (
+                <div className="text-center py-10 text-muted-foreground">
+                  <Layers className="w-10 h-10 mx-auto mb-2 opacity-20" />
+                  No design-token drift detected across pages.
+                </div>
+              ) : (
+                designInconsistencies.map((inc: any, idx: number) => (
+                  <div key={idx} className="rounded-xl p-5 space-y-3 border border-white/8" style={{ background: "#1e1f20" }}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <SevBadge severity={inc.severity} />
+                      <Badge variant="secondary" className="font-mono text-xs bg-white/8 text-white/65 border-white/10">
+                        {inc.tokenType}
+                      </Badge>
+                      <span className="text-sm font-medium text-white/80">{inc.component}</span>
+                    </div>
+                    <p className="text-sm text-white/50 leading-relaxed">{inc.description}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                      {(inc.valuesFound || []).map((v: any, vIdx: number) => (
+                        <div key={vIdx} className="p-3 rounded-lg border border-white/8" style={{ background: "rgba(255,255,255,0.03)" }}>
+                          <p className="font-mono font-medium mb-1 text-white/70">{v.value}</p>
+                          <p className="text-white/40">{(v.sources || []).join(", ")}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {inc.recommendation && (
+                      <div className="rounded-lg p-3 border border-[#34A853]/20" style={{ background: "rgba(52,168,83,0.07)" }}>
+                        <span className="text-xs font-medium" style={{ color: "#81c995" }}>Recommendation: </span>
+                        <span className="text-xs text-white/60">{inc.recommendation}</span>
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Figma mockup vs. live vision diff */}
+            <div className="space-y-3">
+              {figmaDeviations.length === 0 ? (
+                <div className="text-center py-20 text-muted-foreground">
+                  <Figma className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                  {currentScan.figmaMatchScore === 100
+                    ? "No Figma mockup was uploaded, or no deviations were found."
+                    : "No design deviations detected."}
+                </div>
+              ) : (
               figmaDeviations.map((dev: any, idx: number) => (
                 <div key={idx} className="rounded-xl p-5 space-y-3 border border-white/8" style={{ background: "#1e1f20" }}>
                   <div className="flex flex-wrap items-center gap-2">
@@ -683,7 +772,8 @@ export default function ResultsPage() {
                   )}
                 </div>
               ))
-            )}
+              )}
+            </div>
           </div>
         )}
 

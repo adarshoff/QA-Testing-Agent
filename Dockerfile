@@ -22,15 +22,15 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy backend
-COPY designguard/backend /app/backend
+COPY backend /app/backend
 WORKDIR /app/backend
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 RUN playwright install chromium
 
-# Copy frontend build (will be created in step 1)
-COPY artifacts/designguard/dist/public /app/frontend_dist
+# Copy frontend build (created by deploy.sh before the image build)
+COPY frontend/dist/public /app/frontend_dist
 
 # Set environment variables
 ENV PORT=8080

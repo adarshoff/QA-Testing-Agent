@@ -76,6 +76,28 @@ export interface SecurityBug {
   url?: string;
 }
 
+export interface HealingEvent {
+  fieldKey: string;
+  label: string;
+  originalStrategy: string;
+  healedStrategy: string;
+  description: string;
+}
+
+export interface DesignTokenValue {
+  value: string;
+  sources: string[];
+}
+
+export interface DesignInconsistency {
+  tokenType: string;
+  component: string;
+  valuesFound: DesignTokenValue[];
+  severity: string;
+  description: string;
+  recommendation?: string;
+}
+
 export interface ScanData {
   scanId: string;
   userId: string;
@@ -93,6 +115,9 @@ export interface ScanData {
   pagesVisited: string[];
   performanceMetrics: PerformanceMetrics;
   screenshotsMeta: any[];
+  healingEvents: HealingEvent[];
+  designInconsistencies: DesignInconsistency[];
+  designConsistencyScore: number;
   createdAt: string;
   status?: string;
   error?: string;

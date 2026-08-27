@@ -2,7 +2,8 @@ import os
 import sys
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 from dotenv import load_dotenv
@@ -52,6 +53,7 @@ def _clean_result(result: dict) -> dict:
     raw_screenshots = result.pop("screenshots", [])
     result.pop("visual_results", None)
     result.pop("figma_b64", None)
+    result.pop("page_tokens", None)  # raw per-page samples; design_tokens is the aggregated, API-facing form
     result["screenshots_meta"] = [
         {k: v for k, v in s.items() if k != "screenshot"}
         for s in raw_screenshots
@@ -113,3 +115,18 @@ async def download_report(scan_id: str):
 async def get_history(user_id: str):
     scans = get_user_history(user_id)
     return JSONResponse(content={"scans": _camel(scans)})
+
+
+FRONTEND_DIST = os.getenv("FRONTEND_DIST")
+
+if FRONTEND_DIST and os.path.isdir(FRONTEND_DIST):
+    assets_dir = os.path.join(FRONTEND_DIST, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        candidate = os.path.join(FRONTEND_DIST, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
